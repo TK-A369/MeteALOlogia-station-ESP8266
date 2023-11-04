@@ -3,7 +3,7 @@
 # project subdirectory.
 #
 
-PROJECT_NAME := hello-world
+PROJECT_NAME := metealologia-station-esp8266
 
 include $(IDF_PATH)/make/project.mk
 
