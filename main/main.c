@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <netdb.h>
+#include <sys/socket.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
@@ -17,6 +20,10 @@
 #include "lwip/sys.h"
 
 #define WIFI_MAXIMUM_RETRY 8
+
+#define WEB_SERVER "example.com"
+#define WEB_PORT 80
+#define WEB_URL "http://example.com/"
 
 typedef enum WiFiEventGroupBits {
     WiFiEventGroupBits_Connected = BIT0,
@@ -113,6 +120,102 @@ void wifi_init(void) {
     vEventGroupDelete(wifi_event_group);
 }
 
+void tcp_test(void) {
+    const struct addrinfo hints = {
+        .ai_family = AF_INET,
+        .ai_socktype = SOCK_STREAM,
+    };
+    struct addrinfo* res;
+    struct in_addr* addr;
+    int my_socket;
+
+    // Get IP of desired host
+    int err = getaddrinfo(WEB_SERVER, "80", &hints, &res);
+
+    if (err != 0 || res == NULL) {
+        ESP_LOGE(LOG_TAG, "DNS lookup failed! err=%d res=%p", err, res);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        return;
+    }
+
+    // Print IP of host
+    addr = &((struct sockaddr_in*)res->ai_addr)->sin_addr;
+    char ip_buffer[17];
+    ESP_LOGI(LOG_TAG, "DNS lookup succeeded. IP: %s",
+             inet_ntoa_r(*addr, ip_buffer,
+                         sizeof(ip_buffer) / sizeof(ip_buffer[0])));
+
+    // Create socket
+    my_socket = socket(res->ai_family, res->ai_socktype, 0);
+    if (my_socket < 0) {
+        ESP_LOGE(LOG_TAG, "Failed to allocate socket");
+        freeaddrinfo(res);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        return;
+    }
+    ESP_LOGI(LOG_TAG, "Allocated socket");
+
+    // Try to connect
+    if (connect(my_socket, res->ai_addr, res->ai_addrlen) != 0) {
+        ESP_LOGE(LOG_TAG, "Failed to connect socket; errno=%d", errno);
+        close(my_socket);
+        freeaddrinfo(res);
+        vTaskDelay(4000 / portTICK_PERIOD_MS);
+        return;
+    }
+
+    ESP_LOGI(LOG_TAG, "Connected!");
+    freeaddrinfo(res);
+
+    // Send data
+    static const char request[] =
+        "GET " WEB_URL
+        " HTTP/1.0\r\n"
+        "Host: " WEB_SERVER
+        "\r\n"
+        "User-Agent: ESP8266/0.1 MeteALOlogia\r\n\r\n";
+    if (write(my_socket, request, strlen(request)) < 0) {
+        ESP_LOGE(LOG_TAG, "Socket send failed");
+        close(my_socket);
+        vTaskDelay(4000 / portTICK_PERIOD_MS);
+        return;
+    }
+    ESP_LOGI(LOG_TAG, "Successfully sent data through socket");
+
+    struct timeval receiving_timeout;
+    receiving_timeout.tv_sec = 5;
+    receiving_timeout.tv_usec = 0;
+    if (setsockopt(my_socket, SOL_SOCKET, SO_RCVTIMEO, &receiving_timeout,
+                   sizeof(receiving_timeout)) < 0) {
+        ESP_LOGE(LOG_TAG, "Failed to set socket receiving timeout");
+        close(my_socket);
+        vTaskDelay(4000 / portTICK_PERIOD_MS);
+        return;
+    }
+    ESP_LOGI(LOG_TAG, "Successfully set socket receiving timeout");
+
+    // Receive response
+    char recv_buf[64];
+    char response_buffer[1024];
+    char* response_buffer_ptr = response_buffer;
+    uint16_t received_bytes;
+    do {
+        bzero(recv_buf, sizeof(recv_buf));
+        received_bytes = read(my_socket, recv_buf, sizeof(recv_buf) - 1);
+        for (int i = 0; i < received_bytes; i++) {
+            *response_buffer_ptr = recv_buf[i];
+            response_buffer_ptr++;
+        }
+    } while (received_bytes > 0);
+    *response_buffer_ptr = 0;
+
+    // Print response
+    ESP_LOGI(LOG_TAG, "Received response:\n\"\"\"%s\"\"\"", response_buffer);
+
+    // Close socket
+    close(my_socket);
+}
+
 void app_main() {
     printf("MeteALOlogia station is starting...\n");
 
@@ -132,4 +235,6 @@ void app_main() {
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     wifi_init();
+
+    tcp_test();
 }
