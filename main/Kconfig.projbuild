@@ -1,0 +1,14 @@
+menu "MeteALOlogia configuration"
+    menu "Wi-Fi credentials"
+        config WIFI_SSID
+            string "Wi-Fi SSID"
+            default "myssid"
+            help
+                SSID (network name) of your Wi-Fi network.
+        config WIFI_PASSWORD
+            string "Wi-Fi password"
+            default "mypassword"
+            help
+                Password of your Wi-Fi network.
+    endmenu
+endmenu
